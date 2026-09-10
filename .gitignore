@@ -1,0 +1,16 @@
+# Visual Studio / .NET
+.vs/
+**/bin/
+**/obj/
+*.user
+*.suo
+
+# Arduino / build output
+build/
+*.elf
+*.hex
+*.uf2
+
+# OS files
+Thumbs.db
+.DS_Store
