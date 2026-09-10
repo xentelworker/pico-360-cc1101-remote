@@ -10,6 +10,7 @@ public partial class MainWindow : Window
     private readonly SerialController _serial = new();
     private readonly DispatcherTimer _speedRepeatTimer;
     private string? _speedRepeatCommand;
+    private string? _speedRepeatDisplayName;
 
     public MainWindow()
     {
@@ -174,7 +175,6 @@ public partial class MainWindow : Window
 
     private void Kill_Click(object sender, RoutedEventArgs e)
     {
-        // No confirmation dialog by design: an operational stop should be immediate.
         StopSpeedRepeat();
         SendCommand("KILL", "STOP / KILL");
     }
@@ -206,10 +206,9 @@ public partial class MainWindow : Window
     private void StartSpeedRepeat(string command, string displayName)
     {
         StopSpeedRepeat();
-
         SendCommand(command, displayName);
         _speedRepeatCommand = command;
-        _speedRepeatTimer.Tag = displayName;
+        _speedRepeatDisplayName = displayName;
         _speedRepeatTimer.Start();
     }
 
@@ -217,7 +216,7 @@ public partial class MainWindow : Window
     {
         _speedRepeatTimer.Stop();
         _speedRepeatCommand = null;
-        _speedRepeatTimer.Tag = null;
+        _speedRepeatDisplayName = null;
     }
 
     private void SpeedRepeatTimer_Tick(object? sender, EventArgs e)
@@ -228,8 +227,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        var displayName = _speedRepeatTimer.Tag as string ?? _speedRepeatCommand;
-        SendCommand(_speedRepeatCommand, displayName);
+        SendCommand(
+            _speedRepeatCommand,
+            _speedRepeatDisplayName ?? _speedRepeatCommand);
     }
 
     private void Serial_LineReceived(string line)
