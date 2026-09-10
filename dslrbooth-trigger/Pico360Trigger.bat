@@ -63,7 +63,7 @@ rem file_upload to drive the main guest-facing OLED lifecycle. They are
 rem logged above and intentionally ignored here.
 if not defined COMMAND exit /b 0
 
-mode %COMPORT% BAUD=%BAUD% PARITY=N DATA=8 STOP=1 >nul 2>&1
+mode %COMPORT%: BAUD=%BAUD% PARITY=N DATA=8 STOP=1 >nul 2>&1
 if errorlevel 1 (
   if "%LOGGING%"=="1" echo [%date% %time%] ERROR cannot configure %COMPORT% >> "%LOG%"
   exit /b 2
