@@ -93,6 +93,16 @@ The original receiver uses a toggle-style ON/OFF RF command. The GP2 kill functi
 
 Do not rely on RF, USB HID, software, or this project as the sole emergency-stop mechanism for machinery. Use a proper hardwired safety circuit for any application where injury could occur.
 
+## Links to parts
+
+Official Raspberry Pi Pico Board RP2040 Dual-Core 264KB ARM Low-Power Microcomputers High-Performance Cortex-M0+ Processor
+https://www.aliexpress.com/item/1005005617180169.html?spm=a2g0o.order_list.order_list_main.55.c5ce1802mgAlZP
+
+CC1101 Wireless Module With SMA Antenna Wireless Transceiver Module 433MHZ
+https://www.aliexpress.com/item/1005005200440286.html?spm=a2g0o.order_list.order_list_main.70.c5ce1802mgAlZP
+
+Note: I originally though my RF remtoe used 433Mhz but it ended up being 315Mhz. Thankfully this transciever supported both frequencies.
+
 ## License
 
 MIT License. See `LICENSE`.
