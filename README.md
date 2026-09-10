@@ -7,8 +7,58 @@ This project includes:
 - a working Pico + CC1101 controller
 - physical buttons for ON/OFF, reverse, speed up, and speed down
 - a GP2 kill button that sends the booth stop/toggle RF command and an ESC key to Windows for dslrBooth cancellation
+- USB serial commands so a Windows app can control every function
+- a native Windows WPF control frontend with auto COM-port detection
 - a raw 315 MHz CC1101 sniffer / auto-decoder for discovering compatible 24-bit remote codes
 - wiring and RF protocol notes
+
+## Windows software controller
+
+A native Windows frontend is included under:
+
+```text
+windows-app/
+```
+
+It provides large controls for:
+
+- ON / OFF
+- REVERSE
+- SPEED +
+- SPEED -
+- STOP / KILL
+- COM-port selection
+- automatic Pico detection
+- connection status
+- command/activity logging
+
+SPEED+ and SPEED- support press-and-hold repeating. The app communicates with the Pico over its USB serial connection at 115200 baud.
+
+Open:
+
+```text
+windows-app/Pico360Controller.sln
+```
+
+with Visual Studio 2022 and the .NET desktop development workload installed.
+
+Full setup and publishing instructions are in `docs/WINDOWS_APP.md`.
+
+## USB serial protocol
+
+The current Pico firmware accepts:
+
+```text
+PING
+STATUS
+ONOFF
+REVERSE
+SPEED_UP
+SPEED_DOWN
+KILL
+```
+
+The same firmware continues to support all physical buttons, so hardware and software controls can be used together.
 
 ## Verified remote codes
 
@@ -72,12 +122,14 @@ SPI.setTX(19);
 SPI.begin();
 ```
 
-The controller also includes `Keyboard.h` so the Pico can send ESC to Windows when GP2 is pressed.
+The controller also includes `Keyboard.h` so the Pico can send ESC to Windows when GP2 or the Windows app triggers KILL.
 
 ## Files
 
-- `controller/Pico_360_CC1101_Controller.ino` - working controller
+- `controller/Pico_360_CC1101_Controller.ino` - working controller with physical buttons, USB serial control, and HID kill behavior
 - `sniffer/CC1101_315MHz_AutoDecoder.ino` - raw pulse sniffer and 24-bit auto-decoder
+- `windows-app/Pico360Controller.sln` - Visual Studio solution for the Windows frontend
+- `docs/WINDOWS_APP.md` - Windows app setup, build, publish, and troubleshooting guide
 - `docs/WIRING.md` - detailed wiring
 - `docs/RF_PROTOCOL.md` - protocol notes and decoded values
 
@@ -89,7 +141,7 @@ If your remote uses different timing, frequency, modulation, or bit length, adju
 
 ## Safety note
 
-The original receiver uses a toggle-style ON/OFF RF command. The GP2 kill function in this project sends that same RF command and an ESC key to Windows. It is an **operational stop/cancel feature**, not a safety-rated emergency stop.
+The original receiver uses a toggle-style ON/OFF RF command. The GP2 kill function and Windows STOP/KILL button send that same RF command and an ESC key to Windows. This is an **operational stop/cancel feature**, not a safety-rated emergency stop.
 
 Do not rely on RF, USB HID, software, or this project as the sole emergency-stop mechanism for machinery. Use a proper hardwired safety circuit for any application where injury could occur.
 
