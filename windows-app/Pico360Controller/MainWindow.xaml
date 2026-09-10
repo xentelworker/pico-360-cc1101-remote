@@ -1,0 +1,207 @@
+<Window x:Class="Pico360Controller.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Pico 360 Booth Controller"
+        Width="920"
+        Height="720"
+        MinWidth="760"
+        MinHeight="620"
+        WindowStartupLocation="CenterScreen"
+        Background="#101318">
+
+    <Window.Resources>
+        <Style x:Key="ControlButton" TargetType="Button">
+            <Setter Property="FontSize" Value="24"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="#243142"/>
+            <Setter Property="BorderBrush" Value="#3B4B60"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Margin" Value="8"/>
+            <Setter Property="Padding" Value="18"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+
+        <Style x:Key="SmallButton" TargetType="Button" BasedOn="{StaticResource ControlButton}">
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="Margin" Value="4"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="170"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,16">
+            <TextBlock Text="360 BOOTH CONTROLLER"
+                       FontSize="32"
+                       FontWeight="Bold"
+                       Foreground="White"/>
+            <TextBlock Text="Raspberry Pi Pico + CC1101 • 315 MHz"
+                       FontSize="16"
+                       Foreground="#AAB7C6"
+                       Margin="0,4,0,0"/>
+        </StackPanel>
+
+        <Border Grid.Row="1"
+                Background="#171C23"
+                CornerRadius="10"
+                Padding="12"
+                Margin="0,0,0,16">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="170"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <Ellipse x:Name="ConnectionIndicator"
+                         Grid.Column="0"
+                         Width="16"
+                         Height="16"
+                         Fill="#C53A3A"
+                         VerticalAlignment="Center"
+                         Margin="0,0,10,0"/>
+
+                <ComboBox x:Name="PortComboBox"
+                          Grid.Column="1"
+                          Height="34"
+                          FontSize="14"
+                          VerticalContentAlignment="Center"
+                          Margin="0,0,8,0"/>
+
+                <Button Grid.Column="2"
+                        Content="Refresh"
+                        Style="{StaticResource SmallButton}"
+                        Click="Refresh_Click"/>
+
+                <Button x:Name="ConnectButton"
+                        Grid.Column="3"
+                        Content="Connect"
+                        Style="{StaticResource SmallButton}"
+                        Click="Connect_Click"/>
+
+                <Button Grid.Column="4"
+                        Content="Auto Detect"
+                        Style="{StaticResource SmallButton}"
+                        Click="AutoDetect_Click"/>
+
+                <TextBlock x:Name="ConnectionText"
+                           Grid.Column="5"
+                           Text="Disconnected"
+                           Foreground="#D7DEE7"
+                           FontSize="14"
+                           VerticalAlignment="Center"
+                           HorizontalAlignment="Right"
+                           Margin="12,0,0,0"/>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <Button Grid.Row="0"
+                    x:Name="OnOffButton"
+                    Content="ON / OFF"
+                    Height="90"
+                    Style="{StaticResource ControlButton}"
+                    Background="#1F5B86"
+                    Click="OnOff_Click"/>
+
+            <Grid Grid.Row="1" Margin="0,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <Button Grid.Column="0"
+                        x:Name="ReverseButton"
+                        Content="REVERSE"
+                        Style="{StaticResource ControlButton}"
+                        Background="#5A477E"
+                        Click="Reverse_Click"/>
+
+                <Button Grid.Column="1"
+                        x:Name="SpeedUpButton"
+                        Content="SPEED +"
+                        Style="{StaticResource ControlButton}"
+                        Background="#286441"
+                        PreviewMouseLeftButtonDown="SpeedUp_PreviewMouseLeftButtonDown"
+                        PreviewMouseLeftButtonUp="SpeedButton_PreviewMouseLeftButtonUp"
+                        MouseLeave="SpeedButton_MouseLeave"/>
+
+                <Button Grid.Column="2"
+                        x:Name="SpeedDownButton"
+                        Content="SPEED -"
+                        Style="{StaticResource ControlButton}"
+                        Background="#6D5524"
+                        PreviewMouseLeftButtonDown="SpeedDown_PreviewMouseLeftButtonDown"
+                        PreviewMouseLeftButtonUp="SpeedButton_PreviewMouseLeftButtonUp"
+                        MouseLeave="SpeedButton_MouseLeave"/>
+            </Grid>
+
+            <Button Grid.Row="2"
+                    x:Name="KillButton"
+                    Content="STOP / KILL"
+                    Height="110"
+                    Style="{StaticResource ControlButton}"
+                    Background="#A51E2C"
+                    BorderBrush="#D94B58"
+                    FontSize="30"
+                    Click="Kill_Click"/>
+        </Grid>
+
+        <Border Grid.Row="3"
+                Background="#0C0F13"
+                BorderBrush="#242A31"
+                BorderThickness="1"
+                CornerRadius="8"
+                Padding="10"
+                Margin="0,16,0,0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                    <TextBlock Text="Activity Log"
+                               Foreground="White"
+                               FontWeight="SemiBold"
+                               FontSize="14"/>
+                    <TextBlock x:Name="LastCommandText"
+                               Text="Last command: —"
+                               Foreground="#9EABB9"
+                               FontSize="13"
+                               HorizontalAlignment="Right"
+                               DockPanel.Dock="Right"/>
+                </DockPanel>
+
+                <TextBox x:Name="LogTextBox"
+                         Grid.Row="1"
+                         IsReadOnly="True"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto"
+                         Background="#090B0E"
+                         Foreground="#C8D1DB"
+                         BorderThickness="0"
+                         FontFamily="Consolas"
+                         FontSize="12"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
