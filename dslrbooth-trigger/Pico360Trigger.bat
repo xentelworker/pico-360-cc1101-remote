@@ -35,15 +35,15 @@ set "PARAM4=%~5"
 
 if not defined EVENT exit /b 0
 
-if "%LOGGING%"=="1" echo [%date% %time%] %EVENT% %PARAM1% %PARAM2% %PARAM3% %PARAM4% >> "%LOG%"
+if "%LOGGING%"=="1" echo [%date% %time%] EVENT %EVENT% %PARAM1% %PARAM2% %PARAM3% %PARAM4% >> "%LOG%"
 
 set "COMMAND="
 
 if /I "%EVENT%"=="session_start"     set "COMMAND=DSLR_SESSION_START"
 if /I "%EVENT%"=="countdown_start"   set "COMMAND=DSLR_COUNTDOWN %PARAM1%"
 
-rem dslrBooth's countdown event sends percent complete, not seconds remaining.
-rem Convert that percentage using COUNTDOWN_SECONDS from the config file.
+rem dslrBooth sends countdown progress as percent complete.
+rem Convert it to seconds remaining for the Pico OLED.
 if /I "%EVENT%"=="countdown" (
   set /a "PCT=%PARAM1%" >nul 2>&1
   if !PCT! LSS 0 set "PCT=0"
@@ -54,25 +54,22 @@ if /I "%EVENT%"=="countdown" (
 )
 
 if /I "%EVENT%"=="capture_start"     set "COMMAND=DSLR_GO"
-if /I "%EVENT%"=="file_download"     set "COMMAND=DSLR_FILE_DOWNLOADED"
 if /I "%EVENT%"=="processing_start"  set "COMMAND=DSLR_PROCESSING"
 if /I "%EVENT%"=="sharing_screen"    set "COMMAND=DSLR_SHARING"
-if /I "%EVENT%"=="printing"          set "COMMAND=DSLR_PRINTING"
-if /I "%EVENT%"=="file_upload"       set "COMMAND=DSLR_UPLOADING"
 if /I "%EVENT%"=="session_end"       set "COMMAND=DSLR_SESSION_END"
 
-rem Ignore unknown event types without showing an error to guests.
+rem The current Pico firmware does not need file_download, printing or
+rem file_upload to drive the main guest-facing OLED lifecycle. They are
+rem logged above and intentionally ignored here.
 if not defined COMMAND exit /b 0
 
-rem Configure the selected serial port each time because this script is
-rem launched as a short-lived process for each dslrBooth trigger.
 mode %COMPORT% BAUD=%BAUD% PARITY=N DATA=8 STOP=1 >nul 2>&1
 if errorlevel 1 (
   if "%LOGGING%"=="1" echo [%date% %time%] ERROR cannot configure %COMPORT% >> "%LOG%"
   exit /b 2
 )
 
-rem Use the Win32 device path so COM10 and higher also work.
+rem Win32 device path supports COM10 and higher as well as COM1-COM9.
 >"\\.\%COMPORT%" echo %COMMAND%
 if errorlevel 1 (
   if "%LOGGING%"=="1" echo [%date% %time%] ERROR cannot write to %COMPORT% >> "%LOG%"
