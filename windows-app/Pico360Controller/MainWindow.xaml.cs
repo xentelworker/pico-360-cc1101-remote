@@ -8,9 +8,14 @@ namespace Pico360Controller;
 public partial class MainWindow : Window
 {
     private readonly SerialController _serial = new();
+    private readonly DslrBoothWebhookServer _dslrWebhook = new(8000);
     private readonly DispatcherTimer _speedRepeatTimer;
+    private readonly DispatcherTimer _countdownTimer;
+    private readonly DispatcherTimer _heartbeatTimer;
+
     private string? _speedRepeatCommand;
     private string? _speedRepeatDisplayName;
+    private int _countdownRemaining;
 
     public MainWindow()
     {
@@ -19,11 +24,26 @@ public partial class MainWindow : Window
         _serial.LineReceived += Serial_LineReceived;
         _serial.ConnectionChanged += Serial_ConnectionChanged;
 
+        _dslrWebhook.EventReceived += DslrWebhook_EventReceived;
+        _dslrWebhook.Log += message => Dispatcher.BeginInvoke(() => AppendLog(message));
+
         _speedRepeatTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(1100)
         };
         _speedRepeatTimer.Tick += SpeedRepeatTimer_Tick;
+
+        _countdownTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(1)
+        };
+        _countdownTimer.Tick += CountdownTimer_Tick;
+
+        _heartbeatTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(5)
+        };
+        _heartbeatTimer.Tick += HeartbeatTimer_Tick;
 
         Loaded += MainWindow_Loaded;
         Closed += MainWindow_Closed;
@@ -33,6 +53,17 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        try
+        {
+            _dslrWebhook.Start();
+            AppendLog("dslrBooth trigger URL: http://127.0.0.1:8000/");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Could not start dslrBooth webhook listener: {ex.Message}");
+        }
+
+        _heartbeatTimer.Start();
         RefreshPortList();
         await AutoDetectAndConnectAsync();
     }
@@ -40,6 +71,9 @@ public partial class MainWindow : Window
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
         _speedRepeatTimer.Stop();
+        _countdownTimer.Stop();
+        _heartbeatTimer.Stop();
+        _dslrWebhook.Dispose();
         _serial.Dispose();
     }
 
@@ -130,6 +164,107 @@ public partial class MainWindow : Window
         }
     }
 
+    private void SendStatusCommand(string command)
+    {
+        if (!_serial.IsConnected)
+            return;
+
+        try
+        {
+            _serial.SendCommand(command);
+            AppendLog($"dslrBooth > {command}");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"dslrBooth status send failed: {ex.Message}");
+        }
+    }
+
+    private void DslrWebhook_EventReceived(object? sender, DslrBoothWebhookEventArgs e)
+    {
+        Dispatcher.BeginInvoke(() => HandleDslrBoothEvent(e));
+    }
+
+    private void HandleDslrBoothEvent(DslrBoothWebhookEventArgs e)
+    {
+        string eventType = e.EventType.Trim().ToLowerInvariant();
+        AppendLog($"dslrBooth event: {eventType}" +
+                  (string.IsNullOrWhiteSpace(e.Param1) ? "" : $" ({e.Param1})"));
+
+        switch (eventType)
+        {
+            case "session_start":
+                _countdownTimer.Stop();
+                SendStatusCommand("DSLR_SESSION_START");
+                break;
+
+            case "countdown_start":
+                if (!int.TryParse(e.Param1, out _countdownRemaining) || _countdownRemaining < 1)
+                    _countdownRemaining = 10;
+
+                // The OLED follows the actual countdown_start seconds sent by dslrBooth.
+                SendStatusCommand($"DSLR_COUNTDOWN {_countdownRemaining}");
+                _countdownTimer.Stop();
+                _countdownTimer.Start();
+                break;
+
+            case "countdown":
+                // dslrBooth sends percent_complete here. We use countdown_start plus
+                // a local one-second timer so the OLED can show 10, 9, 8 ... 1.
+                break;
+
+            case "capture_start":
+                _countdownTimer.Stop();
+                _countdownRemaining = 0;
+                SendStatusCommand("DSLR_GO");
+                break;
+
+            case "processing_start":
+                _countdownTimer.Stop();
+                SendStatusCommand("DSLR_PROCESSING");
+                break;
+
+            case "sharing_screen":
+                _countdownTimer.Stop();
+                SendStatusCommand("DSLR_SHARING");
+                break;
+
+            case "session_end":
+                _countdownTimer.Stop();
+                _countdownRemaining = 0;
+                SendStatusCommand("DSLR_SESSION_END");
+                break;
+        }
+    }
+
+    private void CountdownTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_countdownRemaining <= 1)
+        {
+            _countdownTimer.Stop();
+            return;
+        }
+
+        _countdownRemaining--;
+        SendStatusCommand($"DSLR_COUNTDOWN {_countdownRemaining}");
+    }
+
+    private void HeartbeatTimer_Tick(object? sender, EventArgs e)
+    {
+        if (!_serial.IsConnected)
+            return;
+
+        try
+        {
+            // Keeps the OLED PC: CONNECTED indication alive without changing controls.
+            _serial.SendCommand("PING");
+        }
+        catch
+        {
+            // SerialController will report the connection problem separately.
+        }
+    }
+
     private void Refresh_Click(object sender, RoutedEventArgs e)
     {
         RefreshPortList();
@@ -176,6 +311,7 @@ public partial class MainWindow : Window
     private void Kill_Click(object sender, RoutedEventArgs e)
     {
         StopSpeedRepeat();
+        _countdownTimer.Stop();
         SendCommand("KILL", "STOP / KILL");
     }
 
@@ -227,9 +363,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        SendCommand(
-            _speedRepeatCommand,
-            _speedRepeatDisplayName ?? _speedRepeatCommand);
+        SendCommand(_speedRepeatCommand, _speedRepeatDisplayName ?? _speedRepeatCommand);
     }
 
     private void Serial_LineReceived(string line)
