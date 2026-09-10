@@ -4,7 +4,7 @@
 // =====================================================
 // Raspberry Pi Pico + CC1101
 // 360 BOOTH RF REMOTE
-// WITH WINDOWS DSLRBOOTH KILL SWITCH
+// PHYSICAL BUTTONS + WINDOWS SERIAL CONTROL + DSLRBOOTH KILL
 // =====================================================
 
 #define BTN_KILL       2
@@ -77,6 +77,8 @@ const uint8_t REPEATS_CONTROL = 20;
 const uint8_t REPEATS_KILL    = 20;
 
 const uint16_t DEBOUNCE_MS = 25;
+
+String serialCommandBuffer;
 
 void ccSelect() {
   digitalWrite(CC_CS, LOW);
@@ -203,15 +205,12 @@ void sendFrame(uint32_t code) {
 }
 
 void transmitCommand(uint32_t code, const char* commandName, uint8_t repeats) {
-  Serial.println();
-  Serial.print("RF command: ");
-  Serial.println(commandName);
-  Serial.print("Code: ");
-  Serial.println(code);
-  Serial.print("Hex: 0x");
+  Serial.print("TX ");
+  Serial.print(commandName);
+  Serial.print(" ");
+  Serial.print(code);
+  Serial.print(" 0x");
   Serial.println(code, HEX);
-  Serial.print("Repeats: ");
-  Serial.println(repeats);
 
   digitalWrite(CC_GDO0, LOW);
   ccStrobe(CC_STX);
@@ -223,33 +222,80 @@ void transmitCommand(uint32_t code, const char* commandName, uint8_t repeats) {
 
   digitalWrite(CC_GDO0, LOW);
   ccStrobe(CC_SIDLE);
-  Serial.println("RF transmission complete.");
+  Serial.print("OK ");
+  Serial.println(commandName);
 }
 
 void cancelDslrBooth() {
-  Serial.println("Sending ESC to Windows...");
+  Serial.println("HID ESC");
   Keyboard.press(KEY_ESC);
   delay(100);
   Keyboard.release(KEY_ESC);
   delay(50);
   Keyboard.releaseAll();
-  Serial.println("ESC sent.");
 }
 
 void killBooth() {
-  Serial.println();
-  Serial.println("================================");
-  Serial.println("*** KILL SWITCH PRESSED ***");
-
-  // Cancel the current Windows/dslrBooth session first.
+  Serial.println("KILL START");
   cancelDslrBooth();
 
-  // Then send the booth's ON/OFF RF command as an operational stop.
-  // WARNING: this receiver command is a toggle, not a safety-rated E-stop.
-  transmitCommand(CODE_ONOFF, "KILL / STOP", REPEATS_KILL);
+  // The receiver's ON/OFF command is a toggle. This is an operational
+  // stop/cancel only, not a safety-rated emergency-stop mechanism.
+  transmitCommand(CODE_ONOFF, "KILL", REPEATS_KILL);
+  Serial.println("KILL COMPLETE");
+}
 
-  Serial.println("*** KILL SEQUENCE COMPLETE ***");
-  Serial.println("================================");
+void processSerialCommand(String command) {
+  command.trim();
+  command.toUpperCase();
+
+  if (command.length() == 0) return;
+
+  if (command == "PING") {
+    Serial.println("PICO360 READY");
+  }
+  else if (command == "STATUS") {
+    Serial.println("PICO360 STATUS READY 315.000MHz");
+  }
+  else if (command == "ONOFF") {
+    transmitCommand(CODE_ONOFF, "ONOFF", REPEATS_ONOFF);
+  }
+  else if (command == "REVERSE") {
+    transmitCommand(CODE_REVERSE, "REVERSE", REPEATS_CONTROL);
+  }
+  else if (command == "SPEED_UP") {
+    transmitCommand(CODE_SPEED_UP, "SPEED_UP", REPEATS_CONTROL);
+  }
+  else if (command == "SPEED_DOWN") {
+    transmitCommand(CODE_SPEED_DOWN, "SPEED_DOWN", REPEATS_CONTROL);
+  }
+  else if (command == "KILL") {
+    killBooth();
+  }
+  else {
+    Serial.print("ERR UNKNOWN_COMMAND ");
+    Serial.println(command);
+  }
+}
+
+void handleSerialInput() {
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+
+    if (c == '\n' || c == '\r') {
+      if (serialCommandBuffer.length() > 0) {
+        processSerialCommand(serialCommandBuffer);
+        serialCommandBuffer = "";
+      }
+    }
+    else if (serialCommandBuffer.length() < 64) {
+      serialCommandBuffer += c;
+    }
+    else {
+      serialCommandBuffer = "";
+      Serial.println("ERR COMMAND_TOO_LONG");
+    }
+  }
 }
 
 bool buttonPressed(uint8_t pin) {
@@ -261,14 +307,17 @@ bool buttonPressed(uint8_t pin) {
 }
 
 void waitForRelease(uint8_t pin) {
-  while (digitalRead(pin) == LOW) delay(5);
+  while (digitalRead(pin) == LOW) {
+    handleSerialInput();
+    delay(5);
+  }
   delay(30);
 }
 
 void setup() {
   Serial.begin(115200);
   Keyboard.begin();
-  delay(2000);
+  delay(1500);
 
   pinMode(BTN_KILL, INPUT_PULLUP);
   pinMode(BTN_ONOFF, INPUT_PULLUP);
@@ -294,43 +343,35 @@ void setup() {
   uint8_t part = ccReadStatus(CC_PARTNUM);
   uint8_t version = ccReadStatus(CC_VERSION);
 
-  Serial.println();
-  Serial.println("======================================");
-  Serial.println("360 BOOTH CONTROLLER");
-  Serial.println("315 MHz RF + USB KILL SWITCH");
-  Serial.println("======================================");
-  Serial.print("PARTNUM: 0x");
+  Serial.println("PICO360 BOOT");
+  Serial.print("PARTNUM 0x");
   if (part < 16) Serial.print('0');
   Serial.println(part, HEX);
-  Serial.print("VERSION: 0x");
+  Serial.print("VERSION 0x");
   if (version < 16) Serial.print('0');
   Serial.println(version, HEX);
 
   if (part == 0x00 && version == 0x14) {
-    Serial.println("CC1101 detected successfully.");
+    Serial.println("CC1101 OK");
   } else {
-    Serial.println("WARNING: Unexpected CC1101 ID.");
+    Serial.println("CC1101 WARNING");
   }
 
   configureTX();
 
-  Serial.println();
-  Serial.println("Frequency: 315.000 MHz");
-  Serial.println("GP2 = KILL -> ESC + RF stop/toggle");
-  Serial.println("GP3 = ON/OFF");
-  Serial.println("GP4 = REVERSE");
-  Serial.println("GP5 = SPEED+");
-  Serial.println("GP6 = SPEED-");
-  Serial.println("Controller ready.");
+  Serial.println("PICO360 READY");
+  Serial.println("COMMANDS PING STATUS ONOFF REVERSE SPEED_UP SPEED_DOWN KILL");
 }
 
 void loop() {
+  handleSerialInput();
+
   if (buttonPressed(BTN_KILL)) {
     killBooth();
     waitForRelease(BTN_KILL);
   }
   else if (buttonPressed(BTN_ONOFF)) {
-    transmitCommand(CODE_ONOFF, "ON/OFF", REPEATS_ONOFF);
+    transmitCommand(CODE_ONOFF, "ONOFF", REPEATS_ONOFF);
     waitForRelease(BTN_ONOFF);
   }
   else if (buttonPressed(BTN_REVERSE)) {
@@ -338,11 +379,11 @@ void loop() {
     waitForRelease(BTN_REVERSE);
   }
   else if (buttonPressed(BTN_SPEED_UP)) {
-    transmitCommand(CODE_SPEED_UP, "SPEED+", REPEATS_CONTROL);
+    transmitCommand(CODE_SPEED_UP, "SPEED_UP", REPEATS_CONTROL);
     waitForRelease(BTN_SPEED_UP);
   }
   else if (buttonPressed(BTN_SPEED_DOWN)) {
-    transmitCommand(CODE_SPEED_DOWN, "SPEED-", REPEATS_CONTROL);
+    transmitCommand(CODE_SPEED_DOWN, "SPEED_DOWN", REPEATS_CONTROL);
     waitForRelease(BTN_SPEED_DOWN);
   }
 
