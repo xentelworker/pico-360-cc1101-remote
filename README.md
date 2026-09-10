@@ -1,4 +1,4 @@
-# Pico 360 CC1101 Remote
+# 360 Booth Remote Clone - Pico CC1101 Remote
 
 Raspberry Pi Pico replacement remote for a 315 MHz 360 photo booth controller using a CC1101 radio module.
 
