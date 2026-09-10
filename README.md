@@ -101,7 +101,7 @@ https://www.aliexpress.com/item/1005005617180169.html?spm=a2g0o.order_list.order
 CC1101 Wireless Module With SMA Antenna Wireless Transceiver Module 433MHZ
 https://www.aliexpress.com/item/1005005200440286.html?spm=a2g0o.order_list.order_list_main.70.c5ce1802mgAlZP
 
-Note: I originally though my RF remtoe used 433Mhz but it ended up being 315Mhz. Thankfully this transciever supported both frequencies.
+Note: I originally thought my RF remote used 433Mhz but it ended up being 315Mhz. Thankfully this transciever supported both frequencies.
 
 ## License
 
