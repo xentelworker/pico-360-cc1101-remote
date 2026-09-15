@@ -91,12 +91,15 @@ const uint8_t IR_PLAY_PAUSE = 0x43;
 const uint8_t IR_NEXT = 0x40;
 const uint8_t IR_STOP = 0x45;
 
-// 15-second music cycle. Normal volume for 4 seconds, then a long fade.
-// 10 VOL- steps are spread from 4.0s to 14.8s so STOP is much less abrupt.
-const uint32_t MUSIC_TOTAL_MS = 15000UL;
-const uint32_t MUSIC_FADE_START_MS = 4000UL;
-const uint32_t MUSIC_FADE_STEP_MS = 1200UL;
+// Music timing:
+// 0-15 seconds: full normal volume.
+// 15-25 seconds: gradual 10-step fade (one VOL- each second).
+// At 25 seconds: STOP, restore volume while stopped, then NEXT.
+const uint32_t MUSIC_FULL_VOLUME_MS = 15000UL;
+const uint32_t MUSIC_FADE_START_MS = 15000UL;
+const uint32_t MUSIC_FADE_STEP_MS = 1000UL;
 const uint8_t MUSIC_FADE_STEPS = 10;
+const uint32_t MUSIC_TOTAL_MS = MUSIC_FADE_START_MS + (MUSIC_FADE_STEP_MS * MUSIC_FADE_STEPS);
 
 String serialCommandBuffer;
 bool oledReady = false;
@@ -164,7 +167,7 @@ void sendSync(){digitalWrite(CC_GDO0,HIGH);delayMicroseconds(SYNC_HIGH_US);digit
 void sendFrame(uint32_t code){for(int b=CODE_BITS-1;b>=0;b--)sendBit((code>>b)&1U);sendSync();}
 void transmitCommand(uint32_t code,const char* name,uint8_t repeats){Serial.print("TX ");Serial.println(name);digitalWrite(CC_GDO0,LOW);ccStrobe(CC_STX);delayMicroseconds(1000);for(uint8_t r=0;r<repeats;r++)sendFrame(code);digitalWrite(CC_GDO0,LOW);ccStrobe(CC_SIDLE);}
 
-// Send one NEC frame. Important: PLAY/PAUSE is a toggle, so it must not be sent twice.
+// Send one NEC frame. PLAY/PAUSE is a toggle, so never double-send it.
 void sendBPA10Once(uint8_t cmd,const char* name){
   Serial.print("IR "); Serial.println(name);
   IrSender.sendNEC(BPA10_ADDRESS,cmd,0);
@@ -188,14 +191,19 @@ void startMusicCycle(){
   musicActive=true;
   sendBPA10Once(IR_PLAY_PAUSE,"PLAY");
   musicStartMs=millis();
-  Serial.println("MUSIC CYCLE START 15s - LONG FADE");
+  Serial.println("MUSIC CYCLE START - 15s FULL + 10s FADE");
 }
 void serviceMusicCycle(){
   if(!musicActive)return;
   uint32_t elapsed=millis()-musicStartMs;
-  if(elapsed>=MUSIC_TOTAL_MS){finishMusicCycle(true);return;}
+
+  if(elapsed>=MUSIC_TOTAL_MS){
+    finishMusicCycle(true);
+    return;
+  }
+
   if(elapsed>=MUSIC_FADE_START_MS){
-    uint8_t target=1+(elapsed-MUSIC_FADE_START_MS)/MUSIC_FADE_STEP_MS;
+    uint8_t target=1+((elapsed-MUSIC_FADE_START_MS)/MUSIC_FADE_STEP_MS);
     if(target>MUSIC_FADE_STEPS)target=MUSIC_FADE_STEPS;
     while(musicFadeStepsSent<target){
       sendBPA10Once(IR_VOL_DOWN,"VOL-");
