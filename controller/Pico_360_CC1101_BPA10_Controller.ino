@@ -25,16 +25,16 @@
 #define OLED_RESET -1
 #define OLED_ADDRESS 0x3C
 
-#define CC_MISO  16
-#define CC_CS    17
-#define CC_SCK   18
-#define CC_MOSI  19
-#define CC_GDO0  20
+#define CC_MISO 16
+#define CC_CS 17
+#define CC_SCK 18
+#define CC_MOSI 19
+#define CC_GDO0 20
 
-#define CC_SRES   0x30
-#define CC_SCAL   0x33
-#define CC_STX    0x35
-#define CC_SIDLE  0x36
+#define CC_SRES 0x30
+#define CC_SCAL 0x33
+#define CC_STX 0x35
+#define CC_SIDLE 0x36
 #define CC_IOCFG2 0x00
 #define CC_IOCFG0 0x02
 #define CC_PKTCTRL1 0x07
@@ -91,11 +91,12 @@ const uint8_t IR_PLAY_PAUSE = 0x43;
 const uint8_t IR_NEXT = 0x40;
 const uint8_t IR_STOP = 0x45;
 
-// Music cycle: 15 seconds total, fade from 9s through 14s.
+// 15-second music cycle. Normal volume for 4 seconds, then a long fade.
+// 10 VOL- steps are spread from 4.0s to 14.8s so STOP is much less abrupt.
 const uint32_t MUSIC_TOTAL_MS = 15000UL;
-const uint32_t MUSIC_FADE_START_MS = 9000UL;
-const uint32_t MUSIC_FADE_STEP_MS = 1000UL;
-const uint8_t MUSIC_FADE_STEPS = 6;
+const uint32_t MUSIC_FADE_START_MS = 4000UL;
+const uint32_t MUSIC_FADE_STEP_MS = 1200UL;
+const uint8_t MUSIC_FADE_STEPS = 10;
 
 String serialCommandBuffer;
 bool oledReady = false;
@@ -163,22 +164,44 @@ void sendSync(){digitalWrite(CC_GDO0,HIGH);delayMicroseconds(SYNC_HIGH_US);digit
 void sendFrame(uint32_t code){for(int b=CODE_BITS-1;b>=0;b--)sendBit((code>>b)&1U);sendSync();}
 void transmitCommand(uint32_t code,const char* name,uint8_t repeats){Serial.print("TX ");Serial.println(name);digitalWrite(CC_GDO0,LOW);ccStrobe(CC_STX);delayMicroseconds(1000);for(uint8_t r=0;r<repeats;r++)sendFrame(code);digitalWrite(CC_GDO0,LOW);ccStrobe(CC_SIDLE);}
 
-void sendBPA10(uint8_t cmd,const char* name){
-  Serial.print("IR ");Serial.println(name);IrSender.sendNEC(BPA10_ADDRESS,cmd,0);delay(60);IrSender.sendNEC(BPA10_ADDRESS,cmd,0);
+// Send one NEC frame. Important: PLAY/PAUSE is a toggle, so it must not be sent twice.
+void sendBPA10Once(uint8_t cmd,const char* name){
+  Serial.print("IR "); Serial.println(name);
+  IrSender.sendNEC(BPA10_ADDRESS,cmd,0);
 }
-void restoreMusicVolume(){for(uint8_t i=0;i<musicFadeStepsSent;i++){sendBPA10(IR_VOL_UP,"VOL+");delay(120);}musicFadeStepsSent=0;}
+void restoreMusicVolume(){
+  for(uint8_t i=0;i<musicFadeStepsSent;i++){sendBPA10Once(IR_VOL_UP,"VOL+");delay(120);}
+  musicFadeStepsSent=0;
+}
 void finishMusicCycle(bool advanceTrack){
-  if(musicActive)sendBPA10(IR_STOP,"STOP"); musicActive=false; restoreMusicVolume();
-  if(advanceTrack){delay(150);sendBPA10(IR_NEXT,"NEXT");} Serial.println("MUSIC READY");
+  if(musicActive)sendBPA10Once(IR_STOP,"STOP");
+  musicActive=false;
+  delay(120);
+  restoreMusicVolume();
+  if(advanceTrack){delay(150);sendBPA10Once(IR_NEXT,"NEXT");}
+  Serial.println("MUSIC READY");
 }
 void startMusicCycle(){
-  if(musicActive||musicTriggeredThisSession)return; musicTriggeredThisSession=true;musicFadeStepsSent=0;musicStartMs=millis();musicActive=true;
-  sendBPA10(IR_PLAY_PAUSE,"PLAY");Serial.println("MUSIC CYCLE START 15s");
+  if(musicActive||musicTriggeredThisSession)return;
+  musicTriggeredThisSession=true;
+  musicFadeStepsSent=0;
+  musicActive=true;
+  sendBPA10Once(IR_PLAY_PAUSE,"PLAY");
+  musicStartMs=millis();
+  Serial.println("MUSIC CYCLE START 15s - LONG FADE");
 }
 void serviceMusicCycle(){
-  if(!musicActive)return;uint32_t elapsed=millis()-musicStartMs;
+  if(!musicActive)return;
+  uint32_t elapsed=millis()-musicStartMs;
   if(elapsed>=MUSIC_TOTAL_MS){finishMusicCycle(true);return;}
-  if(elapsed>=MUSIC_FADE_START_MS){uint8_t target=1+(elapsed-MUSIC_FADE_START_MS)/MUSIC_FADE_STEP_MS;if(target>MUSIC_FADE_STEPS)target=MUSIC_FADE_STEPS;while(musicFadeStepsSent<target){sendBPA10(IR_VOL_DOWN,"VOL-");musicFadeStepsSent++;}}
+  if(elapsed>=MUSIC_FADE_START_MS){
+    uint8_t target=1+(elapsed-MUSIC_FADE_START_MS)/MUSIC_FADE_STEP_MS;
+    if(target>MUSIC_FADE_STEPS)target=MUSIC_FADE_STEPS;
+    while(musicFadeStepsSent<target){
+      sendBPA10Once(IR_VOL_DOWN,"VOL-");
+      musicFadeStepsSent++;
+    }
+  }
 }
 
 void cancelDslrBooth(){Serial.println("HID ESC");Keyboard.press(KEY_ESC);delay(100);Keyboard.release(KEY_ESC);delay(50);Keyboard.releaseAll();}
@@ -192,8 +215,16 @@ void processSerialCommand(String command){
   command.trim();if(!command.length())return;pcConnected=true;lastPcMessageMs=millis();String upper=command;upper.toUpperCase();
   if(upper=="PING"){Serial.println("PICO360 READY");if(!boothRunning)showIdle();}
   else if(upper=="STATUS"){Serial.println("PICO360 STATUS READY 315.000MHz OLED BPA10");if(!boothRunning)showIdle();}
-  else if(upper=="ONOFF")onOffAction();else if(upper=="REVERSE")reverseAction();else if(upper=="SPEED_UP")speedUpAction();else if(upper=="SPEED_DOWN")speedDownAction();else if(upper=="KILL")killBooth();
-  else if(upper=="MUSIC_TEST"){musicTriggeredThisSession=false;startMusicCycle();}
+  else if(upper=="ONOFF")onOffAction();
+  else if(upper=="REVERSE")reverseAction();
+  else if(upper=="SPEED_UP")speedUpAction();
+  else if(upper=="SPEED_DOWN")speedDownAction();
+  else if(upper=="KILL")killBooth();
+  else if(upper=="MUSIC_TEST"){
+    if(musicActive)finishMusicCycle(false);
+    musicTriggeredThisSession=false;
+    startMusicCycle();
+  }
   else if(upper=="MUSIC_STOP"){if(musicActive)finishMusicCycle(false);}
   else if(upper=="DSLR_SESSION_START"){musicTriggeredThisSession=false;showMessage("PREPARING","DSLRBOOTH SESSION");Serial.println("OK DSLR_SESSION_START");}
   else if(upper.startsWith("DSLR_COUNTDOWN ")){int seconds=upper.substring(15).toInt();if(seconds<0)seconds=0;if(seconds>99)seconds=99;if(!musicTriggeredThisSession)startMusicCycle();showCountdown(seconds);Serial.print("OK DSLR_COUNTDOWN ");Serial.println(seconds);}
@@ -218,5 +249,10 @@ void setup(){
 void loop(){
   handleSerialInput();serviceMusicCycle();
   if(pcConnected&&millis()-lastPcMessageMs>15000UL){pcConnected=false;if(!boothRunning)showIdle();}
-  if(buttonPressed(BTN_KILL)){killBooth();waitForRelease(BTN_KILL);}else if(buttonPressed(BTN_ONOFF)){onOffAction();waitForRelease(BTN_ONOFF);}else if(buttonPressed(BTN_REVERSE)){reverseAction();waitForRelease(BTN_REVERSE);}else if(buttonPressed(BTN_SPEED_UP)){speedUpAction();waitForRelease(BTN_SPEED_UP);}else if(buttonPressed(BTN_SPEED_DOWN)){speedDownAction();waitForRelease(BTN_SPEED_DOWN);}delay(2);
+  if(buttonPressed(BTN_KILL)){killBooth();waitForRelease(BTN_KILL);}
+  else if(buttonPressed(BTN_ONOFF)){onOffAction();waitForRelease(BTN_ONOFF);}
+  else if(buttonPressed(BTN_REVERSE)){reverseAction();waitForRelease(BTN_REVERSE);}
+  else if(buttonPressed(BTN_SPEED_UP)){speedUpAction();waitForRelease(BTN_SPEED_UP);}
+  else if(buttonPressed(BTN_SPEED_DOWN)){speedDownAction();waitForRelease(BTN_SPEED_DOWN);}
+  delay(2);
 }
