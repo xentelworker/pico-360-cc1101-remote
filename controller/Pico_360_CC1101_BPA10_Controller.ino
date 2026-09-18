@@ -12,7 +12,7 @@
 // =====================================================
 
 #define BTN_KILL 2
-#define BTN_ONOFF 3
+#define BTN_START 3
 #define BTN_REVERSE 4
 #define BTN_SPEED_UP 5
 #define BTN_SPEED_DOWN 6
@@ -73,21 +73,23 @@ const uint8_t REPEATS_ONOFF=12,REPEATS_CONTROL=20,REPEATS_KILL=20;
 const uint16_t DEBOUNCE_MS=25;
 
 const uint16_t BPA10_ADDRESS=0x00;
-const uint8_t IR_VOL_UP=0x15,IR_VOL_DOWN=0x07,IR_PLAY_PAUSE=0x43,IR_NEXT=0x40,IR_STOP=0x45;
+const uint8_t IR_VOL_UP=0x15,IR_VOL_DOWN=0x07,IR_PLAY_PAUSE=0x43;
 
-// 0-20s full volume, 20-30s gradual fade, then STOP/restore.
-// NEXT is queued and sent shortly after PLAY at the beginning of the next cycle,
-// because the BPA10 appears to ignore NEXT while stopped.
-const uint32_t MUSIC_FULL_VOLUME_MS=20000UL;
+// Platform spins for 10 seconds, then automatically stops.
+const uint32_t PLATFORM_RUN_MS=10000UL;
+
+// Music: 0-20s full volume, 20-30s gradual fade, then PAUSE and restore volume.
 const uint32_t MUSIC_FADE_START_MS=20000UL;
 const uint32_t MUSIC_FADE_STEP_MS=1000UL;
 const uint8_t MUSIC_FADE_STEPS=10;
 const uint32_t MUSIC_TOTAL_MS=MUSIC_FADE_START_MS+(MUSIC_FADE_STEP_MS*MUSIC_FADE_STEPS);
-const uint16_t MUSIC_NEXT_AFTER_PLAY_MS=350;
+const uint16_t MUSIC_PAUSE_SETTLE_MS=150;
+const uint16_t MUSIC_VOLUME_COMMAND_DELAY_MS=120;
 
 String serialCommandBuffer; bool oledReady=false,cc1101Ready=false,pcConnected=false,boothRunning=false,reverseDirection=false;
 uint8_t speedLevel=3; unsigned long lastPcMessageMs=0;
-bool musicActive=false,musicTriggeredThisSession=false,musicAdvancePending=false; unsigned long musicStartMs=0; uint8_t musicFadeStepsSent=0;
+bool platformAutoStopPending=false; unsigned long platformStartMs=0;
+bool musicActive=false,musicTriggeredThisSession=false; unsigned long musicStartMs=0; uint8_t musicFadeStepsSent=0;
 
 void oledHeader(const char* t){display.clearDisplay();display.setTextColor(SSD1306_WHITE);display.setTextSize(1);display.setCursor(0,0);display.println(t);display.drawLine(0,10,127,10,SSD1306_WHITE);}
 void showIdle(const char* s="READY"){if(!oledReady)return;oledHeader("360 BOOTH CONTROLLER");display.setTextSize(2);display.setCursor(28,18);display.println(s);display.setTextSize(1);display.setCursor(0,44);display.print("RF: ");display.println(cc1101Ready?"READY":"ERROR");display.setCursor(0,54);display.print("PC: ");display.println(pcConnected?"CONNECTED":"WAITING");display.display();}
@@ -107,19 +109,52 @@ void sendBit(bool b){digitalWrite(CC_GDO0,HIGH);delayMicroseconds(b?ONE_HIGH_US:
 void sendFrame(uint32_t c){for(int b=CODE_BITS-1;b>=0;b--)sendBit((c>>b)&1U);sendSync();}
 void transmitCommand(uint32_t c,const char* n,uint8_t r){Serial.print("TX ");Serial.println(n);digitalWrite(CC_GDO0,LOW);ccStrobe(CC_STX);delayMicroseconds(1000);for(uint8_t i=0;i<r;i++)sendFrame(c);digitalWrite(CC_GDO0,LOW);ccStrobe(CC_SIDLE);}
 
-void sendBPA10Once(uint8_t c,const char* n){Serial.print("IR ");Serial.println(n);IrSender.sendNEC(BPA10_ADDRESS,c,0);}
-void restoreMusicVolume(){for(uint8_t i=0;i<musicFadeStepsSent;i++){sendBPA10Once(IR_VOL_UP,"VOL+");delay(120);}musicFadeStepsSent=0;}
-void finishMusicCycle(bool advance){if(musicActive)sendBPA10Once(IR_STOP,"STOP");musicActive=false;delay(120);restoreMusicVolume();if(advance){musicAdvancePending=true;Serial.println("MUSIC NEXT QUEUED");}Serial.println("MUSIC READY");}
-void startMusicCycle(){if(musicActive||musicTriggeredThisSession)return;musicTriggeredThisSession=true;musicFadeStepsSent=0;musicActive=true;sendBPA10Once(IR_PLAY_PAUSE,"PLAY");if(musicAdvancePending){delay(MUSIC_NEXT_AFTER_PLAY_MS);sendBPA10Once(IR_NEXT,"NEXT");musicAdvancePending=false;}musicStartMs=millis();Serial.println("MUSIC CYCLE START - 20s FULL + 10s FADE");}
-void serviceMusicCycle(){if(!musicActive)return;uint32_t e=millis()-musicStartMs;if(e>=MUSIC_TOTAL_MS){finishMusicCycle(true);return;}if(e>=MUSIC_FADE_START_MS){uint8_t target=1+((e-MUSIC_FADE_START_MS)/MUSIC_FADE_STEP_MS);if(target>MUSIC_FADE_STEPS)target=MUSIC_FADE_STEPS;while(musicFadeStepsSent<target){sendBPA10Once(IR_VOL_DOWN,"VOL-");musicFadeStepsSent++;}}}
-void cancelDslrBooth(){Serial.println("HID ESC");Keyboard.press(KEY_ESC);delay(100);Keyboard.release(KEY_ESC);delay(50);Keyboard.releaseAll();}
-void killBooth(){showMessage("!!! STOP !!!","CANCELING SESSION");Serial.println("KILL START");if(musicActive)finishMusicCycle(false);musicAdvancePending=false;cancelDslrBooth();transmitCommand(CODE_ONOFF,"KILL",REPEATS_KILL);boothRunning=false;showMessage("STOPPED","RF STOP SENT");delay(900);showIdle("STOPPED");Serial.println("KILL COMPLETE");}
-void onOffAction(){transmitCommand(CODE_ONOFF,"ONOFF",REPEATS_ONOFF);boothRunning=!boothRunning;if(boothRunning)showLive("ON/OFF");else showIdle("STOPPED");}
+void sendBPA10Once(uint8_t cmd,const char* name){Serial.print("IR ");Serial.println(name);IrSender.sendNEC(BPA10_ADDRESS,cmd,0);}
+void restoreMusicVolume(){for(uint8_t i=0;i<musicFadeStepsSent;i++){sendBPA10Once(IR_VOL_UP,"VOL+");delay(MUSIC_VOLUME_COMMAND_DELAY_MS);}musicFadeStepsSent=0;}
+void finishMusicCycle(){if(!musicActive)return;sendBPA10Once(IR_PLAY_PAUSE,"PAUSE");musicActive=false;delay(MUSIC_PAUSE_SETTLE_MS);restoreMusicVolume();musicTriggeredThisSession=false;Serial.println("MUSIC PAUSED - READY FOR NEXT SESSION");if(!boothRunning)showIdle("READY");}
+void startMusicCycle(){if(musicActive||musicTriggeredThisSession)return;musicTriggeredThisSession=true;musicFadeStepsSent=0;musicActive=true;sendBPA10Once(IR_PLAY_PAUSE,"PLAY");musicStartMs=millis();Serial.println("MUSIC RESUMED - 20s FULL + 10s FADE");}
+void serviceMusicCycle(){if(!musicActive)return;uint32_t e=millis()-musicStartMs;if(e>=MUSIC_TOTAL_MS){finishMusicCycle();return;}if(e>=MUSIC_FADE_START_MS){uint8_t target=1+((e-MUSIC_FADE_START_MS)/MUSIC_FADE_STEP_MS);if(target>MUSIC_FADE_STEPS)target=MUSIC_FADE_STEPS;while(musicFadeStepsSent<target){sendBPA10Once(IR_VOL_DOWN,"VOL-");musicFadeStepsSent++;}}}
+void forcePauseMusic(){Serial.println("FORCE MUSIC PAUSE");if(musicActive){sendBPA10Once(IR_PLAY_PAUSE,"PAUSE");musicActive=false;delay(MUSIC_PAUSE_SETTLE_MS);}restoreMusicVolume();musicTriggeredThisSession=false;Serial.println("MUSIC PAUSED IMMEDIATELY");}
+void startDslrBooth(){Serial.println("HID SPACE");Keyboard.press(' ');delay(100);Keyboard.release(' ');Keyboard.releaseAll();}
+void cancelDslrBooth(){Serial.println("HID ESC");Keyboard.press(KEY_ESC);delay(100);Keyboard.release(KEY_ESC);Keyboard.releaseAll();}
+void startBoothSequence(){if(boothRunning){Serial.println("BOOTH ALREADY SPINNING - START IGNORED");return;}Serial.println("NEW BOOTH SEQUENCE");showMessage("STARTING","360 BOOTH");transmitCommand(CODE_ONOFF,"ONOFF START",REPEATS_ONOFF);boothRunning=true;platformAutoStopPending=true;platformStartMs=millis();musicTriggeredThisSession=false;startMusicCycle();startDslrBooth();showLive("START");Serial.println("PLATFORM TIMER STARTED - 10 SECONDS");}
+void servicePlatformAutoStop(){if(!platformAutoStopPending)return;if(!boothRunning){platformAutoStopPending=false;return;}if(millis()-platformStartMs>=PLATFORM_RUN_MS){Serial.println("10 SECOND SPIN COMPLETE");transmitCommand(CODE_ONOFF,"AUTO STOP",REPEATS_ONOFF);boothRunning=false;platformAutoStopPending=false;Serial.println("PLATFORM AUTO STOPPED");Serial.println("MUSIC CONTINUES");if(musicActive)showMessage("SPIN DONE","MUSIC CONTINUES");else showIdle("READY");}}
+void boothButtonAction(){if(boothRunning){Serial.println("START IGNORED - PLATFORM ALREADY RUNNING");return;}startBoothSequence();}
+void killBooth(){Serial.println("!!! KILL !!!");showMessage("!!! STOP !!!","KILL");platformAutoStopPending=false;forcePauseMusic();cancelDslrBooth();if(boothRunning)transmitCommand(CODE_ONOFF,"KILL",REPEATS_KILL);boothRunning=false;musicTriggeredThisSession=false;showMessage("STOPPED","KILL COMPLETE");delay(700);showIdle("READY");Serial.println("KILL COMPLETE");}
 void reverseAction(){transmitCommand(CODE_REVERSE,"REVERSE",REPEATS_CONTROL);reverseDirection=!reverseDirection;if(boothRunning)showLive("REVERSE");else showMessage("REVERSE","COMMAND SENT");}
 void speedUpAction(){transmitCommand(CODE_SPEED_UP,"SPEED_UP",REPEATS_CONTROL);if(speedLevel<5)speedLevel++;if(boothRunning)showLive("SPEED +");else showMessage("SPEED +","COMMAND SENT");}
 void speedDownAction(){transmitCommand(CODE_SPEED_DOWN,"SPEED_DOWN",REPEATS_CONTROL);if(speedLevel>1)speedLevel--;if(boothRunning)showLive("SPEED -");else showMessage("SPEED -","COMMAND SENT");}
-void processSerialCommand(String c){c.trim();if(!c.length())return;pcConnected=true;lastPcMessageMs=millis();String u=c;u.toUpperCase();if(u=="PING"){Serial.println("PICO360 READY");if(!boothRunning)showIdle();}else if(u=="STATUS"){Serial.println("PICO360 STATUS READY 315.000MHz OLED BPA10");if(!boothRunning)showIdle();}else if(u=="ONOFF")onOffAction();else if(u=="REVERSE")reverseAction();else if(u=="SPEED_UP")speedUpAction();else if(u=="SPEED_DOWN")speedDownAction();else if(u=="KILL")killBooth();else if(u=="MUSIC_TEST"){if(musicActive)finishMusicCycle(true);musicTriggeredThisSession=false;startMusicCycle();}else if(u=="MUSIC_STOP"){if(musicActive)finishMusicCycle(false);musicAdvancePending=false;}else if(u=="DSLR_SESSION_START"){musicTriggeredThisSession=false;showMessage("PREPARING","DSLRBOOTH SESSION");Serial.println("OK DSLR_SESSION_START");}else if(u.startsWith("DSLR_COUNTDOWN ")){int s=u.substring(15).toInt();if(s<0)s=0;if(s>99)s=99;if(!musicTriggeredThisSession)startMusicCycle();showCountdown(s);Serial.print("OK DSLR_COUNTDOWN ");Serial.println(s);}else if(u=="DSLR_GO"){boothRunning=true;showGo();Serial.println("OK DSLR_GO");}else if(u=="DSLR_PROCESSING"){boothRunning=false;showMessage("PROCESSING","PLEASE WAIT...");Serial.println("OK DSLR_PROCESSING");}else if(u=="DSLR_SHARING"){boothRunning=false;showMessage("COMPLETE","THANK YOU!");Serial.println("OK DSLR_SHARING");}else if(u=="DSLR_SESSION_END"){boothRunning=false;if(musicActive)finishMusicCycle(true);showIdle();Serial.println("OK DSLR_SESSION_END");}else{Serial.print("ERR UNKNOWN_COMMAND ");Serial.println(c);}}
+void processSerialCommand(String cmd){cmd.trim();if(!cmd.length())return;pcConnected=true;lastPcMessageMs=millis();String u=cmd;u.toUpperCase();
+if(u=="PING"){Serial.println("PICO360 READY");if(!boothRunning)showIdle();}
+else if(u=="STATUS"){Serial.print("PICO360 STATUS ");Serial.print(boothRunning?"SPINNING ":"STOPPED ");Serial.print(musicActive?"MUSIC_PLAYING ":"MUSIC_PAUSED ");Serial.println("315.000MHz OLED BPA10");}
+else if(u=="ONOFF")boothButtonAction();
+else if(u=="REVERSE")reverseAction();
+else if(u=="SPEED_UP")speedUpAction();
+else if(u=="SPEED_DOWN")speedDownAction();
+else if(u=="KILL")killBooth();
+else if(u=="MUSIC_TEST"){if(musicActive)finishMusicCycle();musicTriggeredThisSession=false;startMusicCycle();}
+else if(u=="MUSIC_STOP")forcePauseMusic();
+else if(u=="DSLR_SESSION_START"){Serial.println("OK DSLR_SESSION_START");}
+else if(u.startsWith("DSLR_COUNTDOWN ")){int s=u.substring(15).toInt();if(s<0)s=0;if(s>99)s=99;if(!musicTriggeredThisSession)startMusicCycle();showCountdown(s);Serial.print("OK DSLR_COUNTDOWN ");Serial.println(s);}
+else if(u=="DSLR_GO"){showGo();Serial.println("OK DSLR_GO");}
+else if(u=="DSLR_PROCESSING"){showMessage("PROCESSING","PLEASE WAIT...");Serial.println("OK DSLR_PROCESSING");}
+else if(u=="DSLR_SHARING"){showMessage("COMPLETE","THANK YOU!");Serial.println("OK DSLR_SHARING");}
+else if(u=="DSLR_SESSION_END"){Serial.println("OK DSLR_SESSION_END");}
+else{Serial.print("ERR UNKNOWN_COMMAND ");Serial.println(cmd);}}
 void handleSerialInput(){while(Serial.available()>0){char c=(char)Serial.read();if(c=='\n'||c=='\r'){if(serialCommandBuffer.length()){processSerialCommand(serialCommandBuffer);serialCommandBuffer="";}}else if(serialCommandBuffer.length()<64)serialCommandBuffer+=c;else{serialCommandBuffer="";Serial.println("ERR COMMAND_TOO_LONG");}}}
-bool buttonPressed(uint8_t p){if(digitalRead(p)==LOW){delay(DEBOUNCE_MS);if(digitalRead(p)==LOW)return true;}return false;} void waitForRelease(uint8_t p){while(digitalRead(p)==LOW){handleSerialInput();serviceMusicCycle();delay(5);}delay(30);}
-void setup(){Serial.begin(115200);Keyboard.begin();delay(1000);initOLED();IrSender.begin(IR_SEND_PIN);pinMode(BTN_KILL,INPUT_PULLUP);pinMode(BTN_ONOFF,INPUT_PULLUP);pinMode(BTN_REVERSE,INPUT_PULLUP);pinMode(BTN_SPEED_UP,INPUT_PULLUP);pinMode(BTN_SPEED_DOWN,INPUT_PULLUP);pinMode(CC_CS,OUTPUT);digitalWrite(CC_CS,HIGH);pinMode(CC_MISO,INPUT);pinMode(CC_GDO0,OUTPUT);digitalWrite(CC_GDO0,LOW);SPI.setRX(CC_MISO);SPI.setCS(CC_CS);SPI.setSCK(CC_SCK);SPI.setTX(CC_MOSI);SPI.begin();SPI.beginTransaction(SPISettings(1000000,MSBFIRST,SPI_MODE0));ccReset();uint8_t part=ccReadStatus(CC_PARTNUM),version=ccReadStatus(CC_VERSION);cc1101Ready=(part==0&&version==0x14);configureTX();showIdle();Serial.println("PICO360+BPA10 READY");Serial.println("COMMANDS PING STATUS ONOFF REVERSE SPEED_UP SPEED_DOWN KILL MUSIC_TEST MUSIC_STOP");}
-void loop(){handleSerialInput();serviceMusicCycle();if(pcConnected&&millis()-lastPcMessageMs>15000UL){pcConnected=false;if(!boothRunning)showIdle();}if(buttonPressed(BTN_KILL)){killBooth();waitForRelease(BTN_KILL);}else if(buttonPressed(BTN_ONOFF)){onOffAction();waitForRelease(BTN_ONOFF);}else if(buttonPressed(BTN_REVERSE)){reverseAction();waitForRelease(BTN_REVERSE);}else if(buttonPressed(BTN_SPEED_UP)){speedUpAction();waitForRelease(BTN_SPEED_UP);}else if(buttonPressed(BTN_SPEED_DOWN)){speedDownAction();waitForRelease(BTN_SPEED_DOWN);}delay(2);}
+bool buttonPressed(uint8_t p){if(digitalRead(p)==LOW){delay(DEBOUNCE_MS);if(digitalRead(p)==LOW)return true;}return false;}
+void waitForRelease(uint8_t p){while(digitalRead(p)==LOW){handleSerialInput();servicePlatformAutoStop();serviceMusicCycle();delay(5);}delay(30);}
+void setup(){Serial.begin(115200);Keyboard.begin();delay(1000);initOLED();IrSender.begin(IR_SEND_PIN);
+pinMode(BTN_KILL,INPUT_PULLUP);pinMode(BTN_START,INPUT_PULLUP);pinMode(BTN_REVERSE,INPUT_PULLUP);pinMode(BTN_SPEED_UP,INPUT_PULLUP);pinMode(BTN_SPEED_DOWN,INPUT_PULLUP);
+pinMode(CC_CS,OUTPUT);digitalWrite(CC_CS,HIGH);pinMode(CC_MISO,INPUT);pinMode(CC_GDO0,OUTPUT);digitalWrite(CC_GDO0,LOW);
+SPI.setRX(CC_MISO);SPI.setCS(CC_CS);SPI.setSCK(CC_SCK);SPI.setTX(CC_MOSI);SPI.begin();SPI.beginTransaction(SPISettings(1000000,MSBFIRST,SPI_MODE0));
+ccReset();uint8_t part=ccReadStatus(CC_PARTNUM),version=ccReadStatus(CC_VERSION);cc1101Ready=(part==0&&version==0x14);configureTX();showIdle();
+Serial.println("PICO360+BPA10 READY");Serial.println("GP3 = START NEW BOOTH SESSION");Serial.println("GP2 = IMMEDIATE PAUSE + KILL");Serial.println("PLATFORM = 10 SECOND AUTO STOP");Serial.println("MUSIC = 20s FULL + 10s FADE + PAUSE");Serial.println("NEXT GP3 = NEW SESSION + RESUME SAME TRACK");}
+void loop(){handleSerialInput();servicePlatformAutoStop();serviceMusicCycle();
+if(pcConnected&&millis()-lastPcMessageMs>15000UL)pcConnected=false;
+if(buttonPressed(BTN_KILL)){killBooth();waitForRelease(BTN_KILL);}
+else if(buttonPressed(BTN_START)){boothButtonAction();waitForRelease(BTN_START);}
+else if(buttonPressed(BTN_REVERSE)){reverseAction();waitForRelease(BTN_REVERSE);}
+else if(buttonPressed(BTN_SPEED_UP)){speedUpAction();waitForRelease(BTN_SPEED_UP);}
+else if(buttonPressed(BTN_SPEED_DOWN)){speedDownAction();waitForRelease(BTN_SPEED_DOWN);}
+delay(2);}
